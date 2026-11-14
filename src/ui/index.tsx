@@ -81,6 +81,59 @@ function checkMessage(c: CheckState, t: Strings): string {
   }
 }
 
+/** A small "?" that shows its text on hover or keyboard focus. */
+function Hint({ text, label, align = "left" }: { text: string; label: string; align?: "left" | "right" }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }} onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <button
+        type="button"
+        aria-label={`${label}: ${text}`}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        style={{
+          width: 16,
+          height: 16,
+          padding: 0,
+          borderRadius: 999,
+          border: "1px solid var(--border)",
+          background: "transparent",
+          color: "var(--muted-foreground)",
+          fontSize: 11,
+          lineHeight: "14px",
+          cursor: "help",
+        }}
+      >
+        ?
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 6px)",
+            [align]: -8,
+            width: 320,
+            maxWidth: "70vw",
+            padding: "8px 10px",
+            borderRadius: 8,
+            background: "var(--foreground)",
+            color: "var(--background)",
+            fontSize: 12,
+            fontWeight: 400,
+            lineHeight: 1.4,
+            textAlign: "left",
+            zIndex: 50,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.25)",
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function LimitBars({ data, t, patchSeen }: { data: AccountLimits | undefined; t: Strings; patchSeen: boolean }) {
   if (!data) return <div style={{ ...muted, fontSize: 12 }}>{t.limitsLoading}</div>;
   return (
@@ -320,7 +373,10 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
     <div ref={root} style={{ display: "grid", gap: 14, fontSize: 14 }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 15 }}>{t.title}</div>
+          <div style={{ fontWeight: 600, fontSize: 15, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {t.title}
+            <Hint label={t.helpLabel} text={t.footer + (spendByName.unmatched > 0.005 ? t.unmatched(usd(spendByName.unmatched)) : "")} />
+          </div>
           <div style={{ ...muted, fontSize: 13 }}>{current ? t.defaultIs(current.name) : t.noDefault}</div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
@@ -465,84 +521,87 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
         })}
       </div>
 
-      <div style={{ display: "grid", gap: 4, fontSize: 13 }}>
-        <label style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-          <span>{t.probeLabel}</span>
-          <select
-            value={probeAgentId}
-            onChange={(e) => void chooseProbe(e.target.value)}
-            style={{ font: "inherit", fontSize: 13, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--background)", color: "var(--foreground)" }}
-          >
-            <option value="">{t.probeNone}</option>
-            {agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div style={{ ...muted, fontSize: 12 }}>{t.probeHint}</div>
-      </div>
+      {(() => {
+        const log = limits.data?.switchLog ?? [];
+        const e = log[log.length - 1];
+        const warn = settings.autoSwitch && limits.data && !limits.data.limitsLogSeen ? t.autoNeedsPatch : settings.autoSwitch && settings.standbyCheckMinutes > 0 && !probeAgentId ? t.autoNeedsProbe : null;
+        const event = e
+          ? e.kind === "switched"
+            ? t.autoEvent.switched(when(e.at, t, "date"), e.from, e.to ?? "", `${t.limitName(e.window)} ${e.percent}%`)
+            : e.kind === "no_candidate"
+              ? t.autoEvent.no_candidate(when(e.at, t, "date"), e.from, `${t.limitName(e.window)} ${e.percent}%`)
+              : t.autoEvent.failed(when(e.at, t, "date"), e.from, e.to ?? "")
+          : null;
+        return (
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px", fontSize: 13, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {t.probeLabel}
+                <select value={probeAgentId} onChange={(ev) => void chooseProbe(ev.target.value)} style={selectStyle}>
+                  <option value="">{t.probeNone}</option>
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Hint label={t.helpLabel} text={t.probeHint} />
+            </span>
 
-      <div style={{ display: "grid", gap: 6, fontSize: 13, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
-        <label style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input type="checkbox" checked={settings.autoSwitch} onChange={(e) => void updateSettings({ autoSwitch: e.target.checked })} />
-          <strong>{t.autoTitle}.</strong>
-          <span>{t.autoToggle(settings.threshold)}</span>
-        </label>
-        {settings.autoSwitch && (
-          <>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px" }}>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {t.autoThreshold}
-                <select value={settings.threshold} onChange={(e) => void updateSettings({ threshold: Number(e.target.value) })} style={selectStyle}>
-                  {[70, 80, 85, 90, 95].map((v) => (
-                    <option key={v} value={v}>
-                      {v}%
-                    </option>
-                  ))}
-                </select>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input type="checkbox" checked={settings.autoSwitch} onChange={(ev) => void updateSettings({ autoSwitch: ev.target.checked })} />
+                {t.autoTitle}
               </label>
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {t.autoStandby}
-                <select value={settings.standbyCheckMinutes} onChange={(e) => void updateSettings({ standbyCheckMinutes: Number(e.target.value) })} style={selectStyle}>
-                  {[0, 30, 60].map((v) => (
-                    <option key={v} value={v}>
-                      {t.autoStandbyOptions[v]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {limits.data && !limits.data.limitsLogSeen && <div style={{ color: AMBER, fontSize: 12 }}>{t.autoNeedsPatch}</div>}
-            {settings.standbyCheckMinutes > 0 && !probeAgentId && <div style={{ color: AMBER, fontSize: 12 }}>{t.autoNeedsProbe}</div>}
-            {(limits.data?.switchLog ?? [])
-              .slice()
-              .reverse()
-              .map((e) => {
-                const at = when(e.at, t, "date");
-                const what = `${t.limitName(e.window)} ${e.percent}%`;
-                return (
-                  <div key={e.at + e.kind} style={{ fontSize: 12, color: e.kind === "switched" ? "var(--foreground)" : AMBER }}>
-                    {e.kind === "switched" ? t.autoEvent.switched(at, e.from, e.to ?? "", what) : e.kind === "no_candidate" ? t.autoEvent.no_candidate(at, e.from, what) : t.autoEvent.failed(at, e.from, e.to ?? "")}
-                  </div>
-                );
-              })}
-            {limits.data?.lastAutoCheck && (
-              <div style={{ ...muted, fontSize: 12 }}>{t.autoLastCheck(when(limits.data.lastAutoCheck.at, t, "date"), limits.data.lastAutoCheck.percent)}</div>
+              <select
+                aria-label={t.autoTitle}
+                value={settings.threshold}
+                disabled={!settings.autoSwitch}
+                onChange={(ev) => void updateSettings({ threshold: Number(ev.target.value) })}
+                style={selectStyle}
+              >
+                {[70, 80, 85, 90, 95].map((v) => (
+                  <option key={v} value={v}>
+                    {v}%
+                  </option>
+                ))}
+              </select>
+              <Hint label={t.helpLabel} text={t.autoHelp} />
+            </span>
+
+            {settings.autoSwitch && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {t.autoStandby}
+                  <select value={settings.standbyCheckMinutes} onChange={(ev) => void updateSettings({ standbyCheckMinutes: Number(ev.target.value) })} style={selectStyle}>
+                    {[0, 30, 60].map((v) => (
+                      <option key={v} value={v}>
+                        {t.autoStandbyOptions[v]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Hint label={t.helpLabel} text={t.autoStandbyHelp} />
+              </span>
             )}
-            <div style={{ ...muted, fontSize: 12 }}>{t.autoHint}</div>
-          </>
-        )}
-      </div>
 
-      <div style={{ ...muted, fontSize: 12 }}>
-        {t.footer}
-        {spendByName.unmatched > 0.005 && t.unmatched(usd(spendByName.unmatched))}{" "}
-        <button type="button" style={linkButton} onClick={togglePin}>
-          {pinTop ? t.pinTopOff : t.pinTop}
-        </button>
-      </div>
+            {settings.autoSwitch && limits.data?.lastAutoCheck && (
+              <span style={{ ...muted, fontSize: 12 }}>{t.autoLastCheck(when(limits.data.lastAutoCheck.at, t, "date"), limits.data.lastAutoCheck.percent)}</span>
+            )}
+
+            <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <button type="button" style={linkButton} onClick={togglePin}>
+                {pinTop ? t.pinTopOff : t.pinTop}
+              </button>
+              <Hint label={t.helpLabel} text={t.pinHelp} align="right" />
+            </span>
+
+            {warn && <span style={{ flexBasis: "100%", color: AMBER, fontSize: 12 }}>{warn}</span>}
+            {settings.autoSwitch && event && <span style={{ flexBasis: "100%", fontSize: 12, color: e!.kind === "switched" ? "var(--muted-foreground)" : AMBER }}>{event}</span>}
+          </div>
+        );
+      })()}
     </div>
   );
 }

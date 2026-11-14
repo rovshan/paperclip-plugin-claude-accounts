@@ -66,32 +66,33 @@ const en = {
   alreadyDefault: "Already default",
   switching: "Switching…",
   switchError: (name: string) => `Could not switch to “${name}”. Please try again.`,
-  probeLabel: "Agent used for limit checks:",
+  probeLabel: "Check agent",
   probeNone: "not chosen",
-  autoTitle: "Auto-switch",
-  autoToggle: (threshold: number) => `When the default account reaches ${threshold}% of any limit, move new runs to the least used account`,
-  autoThreshold: "Threshold",
-  autoStandby: "Check standby accounts every",
+  autoTitle: "Auto-switch at",
+  autoHelp:
+    "When the default account reaches this share of any of its limits, new agent runs move to the least used account. Runs already in progress stay where they are. After a switch the plugin waits 30 minutes before switching again, and it does not switch back on its own.",
+  autoStandby: "Standby check",
   autoStandbyOptions: { 0: "never", 30: "30 min", 60: "60 min" } as Record<number, string>,
-  autoExclude: "Never auto-switch to this account",
+  autoStandbyHelp:
+    "How often the limits of accounts nobody is using are refreshed, so a switch lands on an account that really has room. Each refresh is one real, short run of the check agent on that account.",
+  autoExclude: "Skip in auto-switch",
   autoNeedsPatch: "Auto-switch needs the limits patch: without it there is nothing to judge by.",
-  autoNeedsProbe: "Standby checks need a check agent (choose one above).",
-  autoHint:
-    "Runs already in progress stay on their account. After a switch the plugin waits 30 minutes before switching again, and it does not switch back on its own. A standby check is a real short agent run on that account.",
+  autoNeedsProbe: "Standby checks need a check agent.",
   autoEvent: {
     switched: (at: string, from: string, to: string, what: string) => `${at}: switched from “${from}” to “${to}” (${what})`,
     no_candidate: (at: string, from: string, what: string) => `${at}: “${from}” reached the threshold (${what}), but every other account is at its limit too`,
     failed: (at: string, from: string, to: string) => `${at}: could not switch from “${from}” to “${to}”`,
   },
-  autoLastCheck: (at: string, percent: number | null) =>
-    `Last automatic check: ${at}` + (percent == null ? "" : `, default account at ${percent}% of its fullest limit`),
+  autoLastCheck: (at: string, percent: number | null) => `checked ${at}` + (percent == null ? "" : ` · default at ${percent}%`),
   saveError: "Could not save the setting.",
   probeHint: "A check is one real, short run of this agent on the chosen account, so it uses a little of that account's limit. Pick an agent that is usually idle.",
   footer:
     "Spend is shown at API prices: what the same work would have cost without a subscription. Limits are Claude's own numbers; they arrive with agent runs and belong to the account the run used. Switching applies to new runs; runs already in progress finish on their previous account.",
   unmatched: (amount: string) => ` Another ${amount} belongs to accounts that were removed.`,
-  pinTop: "Show at the top of the dashboard",
-  pinTopOff: "Show in the default place",
+  pinTop: "Pin to top",
+  pinTopOff: "Unpin from top",
+  pinHelp: "Pinned: this block is shown above Paperclip's own dashboard panels. Unpinned: it stays where Paperclip puts plugin widgets.",
+  helpLabel: "Help",
 };
 
 export type Strings = typeof en;
