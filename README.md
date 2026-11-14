@@ -7,6 +7,10 @@ If you have connected two or three Claude accounts and keep wondering which one 
 right now, how close each is to its limit, and how to move the team to another account without digging
 through settings — this is for you.
 
+![Claude Accounts widget on the Paperclip dashboard](docs/screenshot.png)
+
+*Demo data: the account names, agents and amounts in the screenshot are invented.*
+
 [Русская версия ниже](#по-русски)
 
 ## What you get
