@@ -97,7 +97,7 @@ The button needs the limits patch: without it the run happens but nothing record
 
 ## Auto-switch
 
-Off by default. Tick **Auto-switch** under the accounts to turn it on. From then on a background job
+Off by default. Tick **Auto-switch at** in the controls row under the accounts to turn it on (hover the **?** marks for what each control does). From then on a background job
 runs every 5 minutes, whether or not the dashboard is open:
 
 1. **It looks at the default account.** If its fullest limit window (session, week or a per-model week)
@@ -114,7 +114,7 @@ Good to know:
 - Runs already in progress stay on their account; only new runs move.
 - After a switch it waits 30 minutes before switching again, and it never switches back by itself.
 - If every other account is at the threshold too, it stays put and says so in the widget.
-- Each account has a "Never auto-switch to this account" box.
+- Each account has a "Skip in auto-switch" box.
 - The widget shows the last few switches and when the job last looked.
 - It decides only on numbers newer than 30 minutes for the default account. With no agent running there
   is nothing to switch away from.
@@ -148,8 +148,8 @@ Good to know:
 - **Accounts are matched by name** between Paperclip's connections and its subscription records. Two
   connections with the same name will be confused.
 - **Dashboard placement.** Paperclip has no setting for widget order. The widget stretches itself to full
-  width and, by default, moves the plugin area to the top of the dashboard with CSS. The link at the
-  bottom of the widget switches that off.
+  width and, by default, moves the plugin area to the top of the dashboard with CSS. The **Unpin from top**
+  link in the controls row switches that off.
 - **Unofficial.** Not affiliated with Paperclip or Anthropic. Claude's limit messages are not a documented
   contract and may change.
 
