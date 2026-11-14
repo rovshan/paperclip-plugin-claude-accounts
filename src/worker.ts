@@ -15,6 +15,8 @@ import path from "node:path";
  *     file; here they are matched to the account each run used.
  *  3. "Check limit" button. One short run of an agent you choose, pinned to the account for that
  *     run only, so Claude reports that account's limits.
+ *  4. Auto-switch (off by default). A job every 5 minutes keeps standby accounts' limits fresh
+ *     and moves the default to the least used account when the current one reaches the threshold.
  */
 
 // Paperclip's own HTTP API, used for the few things the plugin SDK does not expose
@@ -306,6 +308,34 @@ async function runCheck(companyId: string, conn: { id: string; grantId: string; 
   }
 }
 
+// ── Auto-switch ────────────────────────────────────────────────────────────────────────────────
+type Settings = { autoSwitch: boolean; threshold: number; standbyCheckMinutes: number; excluded: string[] };
+const DEFAULT_SETTINGS: Settings = { autoSwitch: false, threshold: 90, standbyCheckMinutes: 60, excluded: [] };
+type SwitchEvent = { at: string; kind: "switched" | "no_candidate" | "failed"; from: string; to: string | null; percent: number; window: string };
+const SWITCH_COOLDOWN_MS = 30 * 60 * 1000;
+/** Limits of the default account older than this are not trusted for a switch decision. */
+const DEFAULT_FRESH_MS = 30 * 60 * 1000;
+const standbyAttempts = new Map<string, number>();
+
+function normalizeSettings(raw: unknown): Settings {
+  const src = (raw ?? {}) as Record<string, unknown>;
+  const threshold = Math.round(Number(src.threshold));
+  const standby = Number(src.standbyCheckMinutes);
+  return {
+    autoSwitch: src.autoSwitch === true,
+    threshold: Number.isFinite(threshold) ? Math.min(99, Math.max(50, threshold)) : DEFAULT_SETTINGS.threshold,
+    standbyCheckMinutes: [0, 30, 60].includes(standby) ? standby : DEFAULT_SETTINGS.standbyCheckMinutes,
+    excluded: Array.isArray(src.excluded) ? [...new Set(src.excluded.map(String).filter((id) => UUID.test(id)))].slice(0, 50) : [],
+  };
+}
+
+/** The fullest window of an account; an account with no known window counts as free. */
+function fullest(limits: LimitWindow[] | undefined): { percent: number; window: string } {
+  let top = { percent: 0, window: "" };
+  for (const l of limits ?? []) if (l.usedPercent > top.percent) top = { percent: l.usedPercent, window: l.id };
+  return top;
+}
+
 function requireCompany(params: Record<string, unknown>): string {
   const companyId = String(params.companyId ?? "");
   if (!UUID.test(companyId)) throw new Error("companyId is required");
@@ -315,7 +345,115 @@ function requireCompany(params: Record<string, unknown>): string {
 const plugin = definePlugin({
   async setup(ctx) {
     void restoreLeftoverPin();
-    const probeKey = (companyId: string) => ({ scopeKind: "company" as const, scopeId: companyId, stateKey: "probeAgentId" });
+    // Everything is kept in instance-scoped state with the company id in the key: the scheduled job
+    // runs outside any company and cannot read company-scoped state.
+    const stateKey = (name: string, companyId: string) => ({ scopeKind: "instance" as const, stateKey: `${name}:${companyId}` });
+    const probeKey = (companyId: string) => stateKey("probeAgentId", companyId);
+    const settingsKey = (companyId: string) => stateKey("settings", companyId);
+    const logKey = (companyId: string) => stateKey("switchLog", companyId);
+    // The job runs outside any company, so remember which companies turned auto-switch on.
+    const enabledKey = { scopeKind: "instance" as const, stateKey: "autoSwitchCompanies" };
+    const readSettings = async (companyId: string) => normalizeSettings(await ctx.state.get(settingsKey(companyId)).catch(() => null));
+    const readLog = async (companyId: string): Promise<SwitchEvent[]> => {
+      const v = await ctx.state.get(logKey(companyId)).catch(() => null);
+      return Array.isArray(v) ? (v as SwitchEvent[]) : [];
+    };
+    const addLog = async (companyId: string, event: SwitchEvent) => ctx.state.set(logKey(companyId), [...(await readLog(companyId)), event].slice(-20));
+
+    /** Connections plus the best known limits for each of them. */
+    const collectLimits = async (companyId: string) => {
+      let conns: any[] = [];
+      let apiReachable = true;
+      try {
+        const d = await getJson(`${API}/api/companies/${companyId}/ai-connections`);
+        conns = (d?.connections ?? []).filter((c: any) => c.provider === "anthropic");
+      } catch {
+        apiReachable = false;
+      }
+      const seen = await limitsFromRuns((sql, p) => ctx.db.query(sql, p), companyId, conns).catch(
+        () => ({}) as Record<string, { limits: LimitWindow[]; at: string }>,
+      );
+      const accounts: Record<string, AccountLimits> = {};
+      for (const c of conns) {
+        const fromClaude: AccountLimits =
+          c.usageProbeSupported === false ? { status: "denied", limits: [], goodAt: null } : await usageFromPaperclip(companyId, c.id);
+        const fromRuns = seen[c.id];
+        accounts[c.id] =
+          fromClaude.status === "ok" ? fromClaude : fromRuns ? { status: "ok", limits: fromRuns.limits, goodAt: fromRuns.at, source: "runs" } : fromClaude;
+      }
+      return { conns, accounts, apiReachable };
+    };
+
+    const tickKey = (companyId: string) => stateKey("lastAutoCheck", companyId);
+    const autoSwitchTick = async (companyId: string) => {
+      const settings = await readSettings(companyId);
+      if (!settings.autoSwitch) return;
+      const { conns, accounts } = await collectLimits(companyId);
+      const current = conns.find((c: any) => c.isDefault);
+      // Shown in the widget, so it is visible that the job is alive and what it saw.
+      await ctx.state.set(tickKey(companyId), { at: new Date().toISOString(), percent: current ? Math.round(fullest(accounts[current.id]?.limits).percent) : null });
+      if (!current) return;
+      const standby = conns.filter((c: any) => !c.isDefault && c.status === "connected" && !settings.excluded.includes(c.id));
+
+      // 1. Keep standby accounts' numbers fresh: at most one check per tick, oldest first.
+      const checkRunning = [...checks.values()].some((c) => c.code === "running");
+      const probeAgentId = (await ctx.state.get(probeKey(companyId)).catch(() => null)) as string | null;
+      if (settings.standbyCheckMinutes > 0 && probeAgentId && !checkRunning) {
+        const maxAge = settings.standbyCheckMinutes * 60 * 1000;
+        const known = (c: any) => Math.max(Date.parse(accounts[c.id]?.goodAt ?? "") || 0, standbyAttempts.get(c.id) ?? 0);
+        const stale = standby.filter((c: any) => Date.now() - known(c) > maxAge).sort((a: any, b: any) => known(a) - known(b))[0];
+        if (stale) {
+          standbyAttempts.set(stale.id, Date.now());
+          checks.set(stale.id, { code: "running", at: new Date().toISOString() });
+          void runCheck(companyId, stale, probeAgentId);
+        }
+      }
+
+      // 2. Switch when the default account has reached the threshold.
+      const goodAt = Date.parse(accounts[current.id]?.goodAt ?? "") || 0;
+      const top = fullest(accounts[current.id]?.limits);
+      if (Date.now() - goodAt > DEFAULT_FRESH_MS || top.percent < settings.threshold) return;
+      const log = await readLog(companyId);
+      const lastSwitch = [...log].reverse().find((e) => e.kind === "switched");
+      if (lastSwitch && Date.now() - Date.parse(lastSwitch.at) < SWITCH_COOLDOWN_MS) return;
+      const base = { at: new Date().toISOString(), from: current.name, percent: Math.round(top.percent), window: top.window };
+      const candidate = standby
+        .map((c: any) => ({ c, used: fullest(accounts[c.id]?.limits).percent }))
+        .filter((x: any) => x.used < settings.threshold)
+        .sort((a: any, b: any) => a.used - b.used)[0];
+      if (!candidate) {
+        // say it once per hour, not every five minutes
+        const last = log[log.length - 1];
+        if (!(last?.kind === "no_candidate" && Date.now() - Date.parse(last.at) < 60 * 60 * 1000)) await addLog(companyId, { ...base, kind: "no_candidate", to: null });
+        return;
+      }
+      try {
+        await sendJson("PUT", `${API}/api/companies/${companyId}/ai-connections/default`, { grantId: candidate.c.grantId });
+        await addLog(companyId, { ...base, kind: "switched", to: candidate.c.name });
+        ctx.logger.info("Auto-switched the default Claude account", { from: current.name, to: candidate.c.name, percent: base.percent, window: base.window });
+      } catch {
+        await addLog(companyId, { ...base, kind: "failed", to: candidate.c.name });
+      }
+    };
+
+    ctx.jobs.register("auto-switch", async () => {
+      const ids = await ctx.state.get(enabledKey).catch(() => null);
+      for (const companyId of Array.isArray(ids) ? (ids as string[]) : []) {
+        await autoSwitchTick(companyId).catch((e) => ctx.logger.warn("Auto-switch tick failed", { companyId, error: String(e) }));
+      }
+    });
+
+    ctx.actions.register("save-settings", async (params) => {
+      const companyId = requireCompany(params);
+      const next = normalizeSettings(params);
+      await ctx.state.set(settingsKey(companyId), next);
+      const ids = await ctx.state.get(enabledKey).catch(() => null);
+      const set = new Set(Array.isArray(ids) ? (ids as string[]) : []);
+      if (next.autoSwitch) set.add(companyId);
+      else set.delete(companyId);
+      await ctx.state.set(enabledKey, [...set]);
+      return { settings: next };
+    });
 
     ctx.data.register("account-costs", async (params) => {
       const companyId = requireCompany(params);
@@ -340,25 +478,7 @@ const plugin = definePlugin({
     ctx.data.register("account-limits", async (params) => {
       const companyId = requireCompany(params);
       const probeAgentId = ((await ctx.state.get(probeKey(companyId)).catch(() => null)) as string | null) ?? null;
-      let conns: any[] = [];
-      let apiReachable = true;
-      try {
-        const d = await getJson(`${API}/api/companies/${companyId}/ai-connections`);
-        conns = (d?.connections ?? []).filter((c: any) => c.provider === "anthropic");
-      } catch {
-        apiReachable = false;
-      }
-      const seen = await limitsFromRuns((sql, p) => ctx.db.query(sql, p), companyId, conns).catch(
-        () => ({}) as Record<string, { limits: LimitWindow[]; at: string }>,
-      );
-      const accounts: Record<string, AccountLimits> = {};
-      for (const c of conns) {
-        const fromClaude: AccountLimits =
-          c.usageProbeSupported === false ? { status: "denied", limits: [], goodAt: null } : await usageFromPaperclip(companyId, c.id);
-        const fromRuns = seen[c.id];
-        accounts[c.id] =
-          fromClaude.status === "ok" ? fromClaude : fromRuns ? { status: "ok", limits: fromRuns.limits, goodAt: fromRuns.at, source: "runs" } : fromClaude;
-      }
+      const { accounts, apiReachable } = await collectLimits(companyId);
       return {
         accounts,
         checks: Object.fromEntries(checks),
@@ -366,6 +486,9 @@ const plugin = definePlugin({
         /** false until the limits patch has written at least once */
         limitsLogSeen: await limitsLogExists(),
         apiReachable,
+        settings: await readSettings(companyId),
+        switchLog: (await readLog(companyId)).slice(-3),
+        lastAutoCheck: await ctx.state.get(tickKey(companyId)).catch(() => null),
       };
     });
 

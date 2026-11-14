@@ -11,8 +11,6 @@ through settings — this is for you.
 
 *Demo data: the account names, agents and amounts in the screenshot are invented.*
 
-[Русская версия ниже](#по-русски)
-
 ## What you get
 
 For every Claude account connected to the company, one card on the dashboard:
@@ -24,8 +22,7 @@ For every Claude account connected to the company, one card on the dashboard:
 | **Who is running where** | Which agents have a run in progress on each account right now. |
 | **Default account switch** | One click makes an account the default for new agent runs. |
 | **"Check limit" button** | Refreshes the limits of an account nobody is using at the moment. |
-
-The interface is in English, or in Russian when the browser language is Russian.
+| **Auto-switch** | Optional. When the default account reaches 90% of a limit, new runs move to the least used account. |
 
 ## Requirements
 
@@ -98,6 +95,33 @@ on its own account when the run ends. Be aware:
 
 The button needs the limits patch: without it the run happens but nothing records the numbers.
 
+## Auto-switch
+
+Off by default. Tick **Auto-switch** under the accounts to turn it on. From then on a background job
+runs every 5 minutes, whether or not the dashboard is open:
+
+1. **It looks at the default account.** If its fullest limit window (session, week or a per-model week)
+   has reached the threshold — 90% unless you change it — it switches the default to another account.
+2. **It picks the least used account** among those that are connected, not excluded and below the
+   threshold. A window whose reset time has passed counts as empty; an account with no known numbers
+   counts as free.
+3. **It keeps standby accounts' numbers fresh.** Every 30 or 60 minutes (your choice, or never) it runs
+   the same check as the "Check limit" button on a standby account whose numbers are older than that,
+   one account per 5-minute pass. This needs a check agent to be chosen.
+
+Good to know:
+
+- Runs already in progress stay on their account; only new runs move.
+- After a switch it waits 30 minutes before switching again, and it never switches back by itself.
+- If every other account is at the threshold too, it stays put and says so in the widget.
+- Each account has a "Never auto-switch to this account" box.
+- The widget shows the last few switches and when the job last looked.
+- It decides only on numbers newer than 30 minutes for the default account. With no agent running there
+  is nothing to switch away from.
+- Standby checks are real short agent runs: with two standby accounts checked hourly that is about 48
+  short runs a day. Set the interval to "never" if you would rather not spend that.
+- It needs the limits patch: without it there are no numbers to judge by.
+
 ## How the numbers are produced
 
 - **Spend.** Paperclip stores, for every run, the subscription it used and the API-equivalent cost reported
@@ -110,16 +134,17 @@ The button needs the limits patch: without it the run happens but nothing record
 ## What the plugin touches
 
 - Reads two Paperclip tables, read-only: `cost_events` and `heartbeat_runs`.
-- Stores one value in plugin state: the agent chosen for limit checks.
+- Stores in plugin state: the agent chosen for limit checks, the auto-switch settings and its short log.
 - Reads and trims `~/.paperclip/claude-accounts/limits.jsonl`; keeps a marker file there during a check.
 - Calls Paperclip's local HTTP API. It makes no requests to any other host and sends nothing anywhere.
 - For a check, temporarily changes one agent's account binding and restores it.
+- With auto-switch on, changes the company's default Claude account when the threshold is reached.
 
 ## Limitations
 
-- **Local mode only for limits and checks.** The worker talks to Paperclip's API at
+- **Local mode only for limits, checks and auto-switch.** The worker talks to Paperclip's API at
   `http://127.0.0.1:3100` without credentials (override with `PAPERCLIP_API_URL`). On deployments that
-  require sign-in for the API, spend still works, limits and the check button do not.
+  require sign-in for the API, spend still works; limits, the check button and auto-switch do not.
 - **Accounts are matched by name** between Paperclip's connections and its subscription records. Two
   connections with the same name will be confused.
 - **Dashboard placement.** Paperclip has no setting for widget order. The widget stretches itself to full
@@ -136,56 +161,9 @@ npx paperclipai plugin disable paperclip-plugin-claude-accounts
 npx paperclipai plugin enable paperclip-plugin-claude-accounts   # reload after a rebuild
 ```
 
-Source layout: `src/worker.ts` (data and actions), `src/ui/index.tsx` (widget), `src/ui/i18n.ts`
-(English and Russian strings), `scripts/limits-patch.mjs` (the optional patch).
+Source layout: `src/worker.ts` (data, actions and the auto-switch job), `src/ui/index.tsx` (widget),
+`src/ui/i18n.ts` (interface text), `scripts/limits-patch.mjs` (the optional patch).
 
 ## License
 
 MIT © Rovshan Shirinov
-
----
-
-## По-русски
-
-Блок на дашборде [Paperclip](https://github.com/paperclipai/paperclip) для тех, чьи агенты работают на
-**подписках Claude** (вход по аккаунту), а не на API-ключах.
-
-**Что показывает** по каждому подключённому Claude-аккаунту:
-
-- настоящие лимиты: текущая 5-часовая сессия и недельные окна в процентах, со временем сброса;
-- расход по ценам API за сегодня, 7 дней, месяц и всё время — точный, по каждому аккаунту;
-- какие агенты работают на аккаунте прямо сейчас;
-- кнопку «Сделать основным» — переключает новые запуски агентов на этот аккаунт;
-- кнопку «Проверить лимит» — обновляет лимиты аккаунта, на котором сейчас никто не работает.
-
-**Установка**
-
-```bash
-git clone https://github.com/rovshan/paperclip-plugin-claude-accounts.git
-cd paperclip-plugin-claude-accounts
-npm install
-npm run build
-npx paperclipai plugin install --local "$(pwd)"
-```
-
-**Лимиты.** Без дополнительного шага шкалы лимитов пустые: Claude не отдаёт их входу Paperclip. Но те же
-цифры Claude присылает с каждым запуском агента, а Paperclip их выбрасывает. Правка лимитов добавляет
-несколько строк в мост Paperclip к Claude Code, чтобы эти цифры записывались в локальный файл:
-
-```bash
-npm run limits:apply     # поставить правку
-npm run limits:status    # проверить, стоит ли она
-npm run limits:revert    # убрать
-```
-
-Правка меняет файл внутри зависимостей Paperclip. Она делает резервную копию, полностью откатывается,
-не требует перезапуска и не может уронить запуск агента. После обновления или переустановки Paperclip
-её нужно поставить заново.
-
-**Кнопка «Проверить лимит».** Под списком аккаунтов выберите агента для проверок (лучше того, кто обычно
-свободен). Проверка — это один настоящий короткий запуск этого агента на выбранном аккаунте: агент на
-время привязывается к аккаунту и после запуска возвращается на свой. Проверка тратит немного лимита
-проверяемого аккаунта и работает только вместе с правкой лимитов.
-
-**Ограничения.** Лимиты и проверка работают, когда Paperclip запущен в обычном локальном режиме.
-Аккаунты сопоставляются по имени. Плагин неофициальный и не связан с Paperclip и Anthropic.

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { usePluginAction, usePluginData, type PluginWidgetProps } from "@paperclipai/plugin-sdk/ui";
-import { detectLang, STRINGS, type Strings } from "./i18n.js";
+import { T, type Strings } from "./i18n.js";
 
 type Connection = { id: string; grantId: string; name: string; provider: string; isDefault?: boolean; status?: string };
 type ActiveRun = { agentName?: string; status?: string };
@@ -17,7 +17,13 @@ type LimitsData = {
   probeAgentId: string | null;
   limitsLogSeen: boolean;
   apiReachable: boolean;
+  settings?: Settings;
+  switchLog?: SwitchEvent[];
+  lastAutoCheck?: { at: string; percent: number | null } | null;
 };
+type Settings = { autoSwitch: boolean; threshold: number; standbyCheckMinutes: number; excluded: string[] };
+type SwitchEvent = { at: string; kind: "switched" | "no_candidate" | "failed"; from: string; to: string | null; percent: number; window: string };
+const DEFAULT_SETTINGS: Settings = { autoSwitch: false, threshold: 90, standbyCheckMinutes: 60, excluded: [] };
 type PeriodKey = "today" | "week" | "month" | "all";
 
 const PERIOD_KEYS: PeriodKey[] = ["today", "week", "month", "all"];
@@ -108,7 +114,7 @@ function LimitBars({ data, t, patchSeen }: { data: AccountLimits | undefined; t:
 
 export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
   const companyId = context.companyId;
-  const t = useMemo(() => STRINGS[detectLang()], []);
+  const t = T;
   const root = useRef<HTMLDivElement>(null);
   const [period, setPeriod] = useState<PeriodKey>("today");
   const [conns, setConns] = useState<Connection[] | null>(null);
@@ -138,6 +144,17 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
   const limits = usePluginData<LimitsData>("account-limits", limitParams);
   const checkLimits = usePluginAction("check-limits");
   const setProbeAgent = usePluginAction("set-probe-agent");
+  const saveSettings = usePluginAction("save-settings");
+  const settings = limits.data?.settings ?? DEFAULT_SETTINGS;
+  const updateSettings = async (patch: Partial<Settings>) => {
+    setNotice(null);
+    try {
+      await saveSettings({ companyId, ...settings, ...patch });
+      limits.refresh();
+    } catch {
+      setNotice(t.saveError);
+    }
+  };
 
   // Several accounts side by side need the whole dashboard row. Optionally the block is also
   // moved above Paperclip's own panels; the host has no setting for widget order, so this is done
@@ -294,6 +311,7 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
   const total = (costs.data?.accounts ?? []).reduce((s, a) => s + a.usd, 0);
   const current = conns?.find((c) => c.isDefault);
   const probeAgentId = limits.data?.probeAgentId ?? "";
+  const selectStyle: CSSProperties = { font: "inherit", fontSize: 13, padding: "3px 6px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--background)", color: "var(--foreground)" };
   const linkButton: CSSProperties = { font: "inherit", fontSize: 12, padding: 0, border: 0, background: "none", color: "var(--muted-foreground)", textDecoration: "underline", cursor: "pointer" };
 
   if (!companyId) return <div ref={root} style={muted}>{t.selectCompany}</div>;
@@ -411,6 +429,19 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
                 )}
               </div>
 
+              {settings.autoSwitch && (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer", ...muted }}>
+                  <input
+                    type="checkbox"
+                    checked={settings.excluded.includes(c.id)}
+                    onChange={(e) =>
+                      void updateSettings({ excluded: e.target.checked ? [...settings.excluded, c.id] : settings.excluded.filter((id) => id !== c.id) })
+                    }
+                  />
+                  {t.autoExclude}
+                </label>
+              )}
+
               <button
                 type="button"
                 disabled={c.isDefault || switching !== null}
@@ -451,6 +482,58 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
           </select>
         </label>
         <div style={{ ...muted, fontSize: 12 }}>{t.probeHint}</div>
+      </div>
+
+      <div style={{ display: "grid", gap: 6, fontSize: 13, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+        <label style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={settings.autoSwitch} onChange={(e) => void updateSettings({ autoSwitch: e.target.checked })} />
+          <strong>{t.autoTitle}.</strong>
+          <span>{t.autoToggle(settings.threshold)}</span>
+        </label>
+        {settings.autoSwitch && (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px" }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {t.autoThreshold}
+                <select value={settings.threshold} onChange={(e) => void updateSettings({ threshold: Number(e.target.value) })} style={selectStyle}>
+                  {[70, 80, 85, 90, 95].map((v) => (
+                    <option key={v} value={v}>
+                      {v}%
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {t.autoStandby}
+                <select value={settings.standbyCheckMinutes} onChange={(e) => void updateSettings({ standbyCheckMinutes: Number(e.target.value) })} style={selectStyle}>
+                  {[0, 30, 60].map((v) => (
+                    <option key={v} value={v}>
+                      {t.autoStandbyOptions[v]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            {limits.data && !limits.data.limitsLogSeen && <div style={{ color: AMBER, fontSize: 12 }}>{t.autoNeedsPatch}</div>}
+            {settings.standbyCheckMinutes > 0 && !probeAgentId && <div style={{ color: AMBER, fontSize: 12 }}>{t.autoNeedsProbe}</div>}
+            {(limits.data?.switchLog ?? [])
+              .slice()
+              .reverse()
+              .map((e) => {
+                const at = when(e.at, t, "date");
+                const what = `${t.limitName(e.window)} ${e.percent}%`;
+                return (
+                  <div key={e.at + e.kind} style={{ fontSize: 12, color: e.kind === "switched" ? "var(--foreground)" : AMBER }}>
+                    {e.kind === "switched" ? t.autoEvent.switched(at, e.from, e.to ?? "", what) : e.kind === "no_candidate" ? t.autoEvent.no_candidate(at, e.from, what) : t.autoEvent.failed(at, e.from, e.to ?? "")}
+                  </div>
+                );
+              })}
+            {limits.data?.lastAutoCheck && (
+              <div style={{ ...muted, fontSize: 12 }}>{t.autoLastCheck(when(limits.data.lastAutoCheck.at, t, "date"), limits.data.lastAutoCheck.percent)}</div>
+            )}
+            <div style={{ ...muted, fontSize: 12 }}>{t.autoHint}</div>
+          </>
+        )}
       </div>
 
       <div style={{ ...muted, fontSize: 12 }}>

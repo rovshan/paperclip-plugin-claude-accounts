@@ -1,23 +1,9 @@
-// English by default; Russian when the browser language is Russian.
-export type Lang = "en" | "ru";
-
-export function detectLang(): Lang {
-  const list = typeof navigator !== "undefined" ? [navigator.language, ...(navigator.languages ?? [])] : [];
-  return list.some((l) => (l ?? "").toLowerCase().startsWith("ru")) ? "ru" : "en";
-}
-
-function ruPlural(n: number, one: string, few: string, many: string): string {
-  const a = n % 10;
-  const b = n % 100;
-  if (a === 1 && b !== 11) return one;
-  if (a >= 2 && a <= 4 && (b < 12 || b > 14)) return few;
-  return many;
-}
-
+// All interface text lives here.
 const MODEL_NAMES: Record<string, string> = { fable: "Fable", opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", mythos: "Mythos" };
 
 const en = {
-  locale: "en-US",
+  // 24-hour clock, English weekday and month names
+  locale: "en-GB",
   title: "Claude accounts",
   selectCompany: "Select a company.",
   defaultIs: (name: string) => `New agent runs go through “${name}”`,
@@ -82,6 +68,24 @@ const en = {
   switchError: (name: string) => `Could not switch to “${name}”. Please try again.`,
   probeLabel: "Agent used for limit checks:",
   probeNone: "not chosen",
+  autoTitle: "Auto-switch",
+  autoToggle: (threshold: number) => `When the default account reaches ${threshold}% of any limit, move new runs to the least used account`,
+  autoThreshold: "Threshold",
+  autoStandby: "Check standby accounts every",
+  autoStandbyOptions: { 0: "never", 30: "30 min", 60: "60 min" } as Record<number, string>,
+  autoExclude: "Never auto-switch to this account",
+  autoNeedsPatch: "Auto-switch needs the limits patch: without it there is nothing to judge by.",
+  autoNeedsProbe: "Standby checks need a check agent (choose one above).",
+  autoHint:
+    "Runs already in progress stay on their account. After a switch the plugin waits 30 minutes before switching again, and it does not switch back on its own. A standby check is a real short agent run on that account.",
+  autoEvent: {
+    switched: (at: string, from: string, to: string, what: string) => `${at}: switched from “${from}” to “${to}” (${what})`,
+    no_candidate: (at: string, from: string, what: string) => `${at}: “${from}” reached the threshold (${what}), but every other account is at its limit too`,
+    failed: (at: string, from: string, to: string) => `${at}: could not switch from “${from}” to “${to}”`,
+  },
+  autoLastCheck: (at: string, percent: number | null) =>
+    `Last automatic check: ${at}` + (percent == null ? "" : `, default account at ${percent}% of its fullest limit`),
+  saveError: "Could not save the setting.",
   probeHint: "A check is one real, short run of this agent on the chosen account, so it uses a little of that account's limit. Pick an agent that is usually idle.",
   footer:
     "Spend is shown at API prices: what the same work would have cost without a subscription. Limits are Claude's own numbers; they arrive with agent runs and belong to the account the run used. Switching applies to new runs; runs already in progress finish on their previous account.",
@@ -90,86 +94,5 @@ const en = {
   pinTopOff: "Show in the default place",
 };
 
-const ru: typeof en = {
-  locale: "ru-RU",
-  title: "Claude-аккаунты",
-  selectCompany: "Выберите компанию.",
-  defaultIs: (name) => `Новые запуски агентов идут через «${name}»`,
-  noDefault: "Основной аккаунт не выбран",
-  periodLabel: "Период расхода",
-  periods: { today: "Сегодня", week: "7 дней", month: "Месяц", all: "Всё время" },
-  totalCaption: "всего по ценам API",
-  loadingAccounts: "Загружаю аккаунты…",
-  loadError: "Не удалось получить список аккаунтов. Повторю через минуту.",
-  costError: (m) => `Не удалось посчитать расход: ${m}`,
-  noAccounts: "К этой компании пока не подключён ни один Claude-аккаунт. Добавьте его в разделе Connectors.",
-  isDefault: "● Основной",
-  standby: "В запасе",
-  notConnected: "не подключён",
-  runs: (n) => `${n} ${ruPlural(n, "запуск", "запуска", "запусков")}`,
-  tokens: (n) =>
-    (n >= 1e9
-      ? `${(n / 1e9).toFixed(1).replace(".", ",")} млрд`
-      : n >= 1e6
-        ? `${(n / 1e6).toFixed(1).replace(".", ",")} млн`
-        : n >= 1e3
-          ? `${Math.round(n / 1e3)} тыс.`
-          : String(n)) + " токенов",
-  noRuns: "запусков не было",
-  share: (p) => `${p}% общего расхода агентов за период`,
-  limitsTitle: "Лимиты Claude",
-  limitsLoading: "Запрашиваю лимиты у Claude…",
-  limitName: (id) => {
-    if (id === "five_hour") return "Текущая сессия";
-    if (id === "seven_day") return "Неделя, все модели";
-    const m = /^seven_day_([a-z]+)/.exec(id);
-    if (m) return "Неделя, " + (MODEL_NAMES[m[1]] ?? m[1]);
-    if (id === "extra_usage") return "Дополнительное использование";
-    return id;
-  },
-  used: (p) => `использовано ${p}%`,
-  resets: (when) => ` · сброс ${when}`,
-  fromRuns: (when) => `По последнему запуску агента на этом аккаунте, ${when}`,
-  fromClaude: (when) => `Данные Claude на ${when}`,
-  noLimitData: "Данных пока нет. Нажмите «Проверить лимит» или дождитесь запуска агента на этом аккаунте.",
-  noLimitDataNoPatch:
-    "Данных пока нет. Claude не отдаёт лимиты входу Paperclip, поэтому они читаются из запусков агентов — для этого нужна правка лимитов (см. README плагина: npm run limits:apply).",
-  checkButton: "Проверить лимит",
-  checking: "Проверяю…",
-  checkRunning: (agent) => `Идёт короткий запуск агента ${agent ?? "для проверки"} на этом аккаунте, до пары минут.`,
-  check: {
-    done: "Проверено, цифры обновлены.",
-    slow: "Проверочный запуск идёт дольше 3 минут; цифры появятся, когда он закончится.",
-    run_failed: (d) => `Проверочный запуск не прошёл: ${d ?? "неизвестная ошибка"}`,
-    api_unreachable: "Paperclip не ответил, проверка не запущена.",
-    no_probe: "Агента для проверки больше нет. Выберите другого ниже.",
-    probe_busy: (agent) => `${agent ?? "Агент для проверки"} сейчас занят. Повторите, когда он освободится.`,
-    error: (d) => `Проверка не удалась: ${d ?? "неизвестная ошибка"}`,
-    restore_failed: (agent) => `Не удалось вернуть агента ${agent ?? ""} на его аккаунт — проверьте его настройки.`,
-  },
-  startErrors: {
-    ALREADY_RUNNING: "Уже идёт проверка другого аккаунта, дождитесь её окончания.",
-    NO_PROBE_AGENT: "Сначала выберите агента для проверки (под списком аккаунтов).",
-    API_UNREACHABLE: "Paperclip не ответил.",
-    ACCOUNT_NOT_FOUND: "Аккаунт не найден.",
-    fallback: "Проверка не запустилась.",
-  },
-  workingNow: "Сейчас работают: ",
-  nobodyWorking: "Сейчас никто не работает",
-  agentFallback: "агент",
-  makeDefault: "Сделать основным",
-  alreadyDefault: "Уже основной",
-  switching: "Переключаю…",
-  switchError: (name) => `Не удалось переключить на «${name}». Попробуйте ещё раз.`,
-  probeLabel: "Агент для проверки лимитов:",
-  probeNone: "не выбран",
-  probeHint: "Проверка — это один настоящий короткий запуск этого агента на выбранном аккаунте, она тратит немного его лимита. Выберите агента, который обычно свободен.",
-  footer:
-    "Расход показан по ценам API: столько стоила бы та же работа без подписки. Лимиты — настоящие цифры Claude: они приходят с запусками агентов и относятся к аккаунту, на котором шёл запуск. Переключение действует на новые запуски, уже идущие доработают на прежнем аккаунте.",
-  unmatched: (amount) => ` Ещё ${amount} приходится на удалённые аккаунты.`,
-  pinTop: "Показывать вверху дашборда",
-  pinTopOff: "Показывать на обычном месте",
-};
-
 export type Strings = typeof en;
-export const STRINGS: Record<Lang, Strings> = { en, ru };
+export const T: Strings = en;

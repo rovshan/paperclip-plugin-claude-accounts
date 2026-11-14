@@ -1,7 +1,7 @@
 {
   "name": "paperclip-plugin-claude-accounts",
-  "version": "0.1.0",
-  "description": "Paperclip dashboard widget for Claude subscription accounts: real usage limits, API-equivalent spend per account, and one-click switching of the default account.",
+  "version": "0.2.0",
+  "description": "Paperclip dashboard widget for Claude subscription accounts: real usage limits, API-equivalent spend per account, one-click and automatic switching of the default account.",
   "type": "module",
   "license": "MIT",
   "author": "Rovshan Shirinov",
