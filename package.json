@@ -1,0 +1,30 @@
+{
+  "name": "paperclip-plugin-claude-accounts",
+  "version": "0.1.0",
+  "description": "Paperclip dashboard widget for Claude subscription accounts: real usage limits, API-equivalent spend per account, and one-click switching of the default account.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Rovshan Shirinov",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rovshan/paperclip-plugin-claude-accounts.git"
+  },
+  "keywords": ["paperclip", "paperclipai", "plugin", "claude", "subscription", "usage-limits", "dashboard"],
+  "scripts": {
+    "build": "node ./build.mjs",
+    "limits:apply": "node ./scripts/limits-patch.mjs apply",
+    "limits:revert": "node ./scripts/limits-patch.mjs revert",
+    "limits:status": "node ./scripts/limits-patch.mjs status"
+  },
+  "paperclipPlugin": {
+    "manifest": "./dist/manifest.js",
+    "worker": "./dist/worker.js",
+    "ui": "./dist/ui/"
+  },
+  "files": ["dist", "migrations", "scripts", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "devDependencies": {
+    "@paperclipai/plugin-sdk": "^2026.1106.0",
+    "esbuild": "^0.27.3"
+  }
+}
