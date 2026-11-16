@@ -102,6 +102,7 @@ runs every 5 minutes, whether or not the dashboard is open:
 
 1. **It looks at the default account.** If its fullest limit window (session, week or a per-model week)
    has reached the threshold — 90% unless you change it — it switches the default to another account.
+   At 100% it switches only once the limit is used up, so runs on that account can fail for a few minutes first.
 2. **It picks the least used account** among those that are connected, not excluded and below the
    threshold. A window whose reset time has passed counts as empty; an account with no known numbers
    counts as free.

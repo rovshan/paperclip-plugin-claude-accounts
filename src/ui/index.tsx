@@ -561,7 +561,7 @@ export function ClaudeAccountsWidget({ context }: PluginWidgetProps) {
                 onChange={(ev) => void updateSettings({ threshold: Number(ev.target.value) })}
                 style={selectStyle}
               >
-                {[70, 80, 85, 90, 95].map((v) => (
+                {[70, 80, 85, 90, 95, 100].map((v) => (
                   <option key={v} value={v}>
                     {v}%
                   </option>

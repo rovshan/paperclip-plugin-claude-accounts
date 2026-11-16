@@ -132,7 +132,7 @@ async function usageFromPaperclip(companyId: string, connectionId: string): Prom
 type LimitEvent = {
   at: string;
   runId: string | null;
-  info?: { unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number }> };
+  info?: { unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number; status?: string }> };
 };
 const WINDOW_ORDER = ["five_hour", "seven_day"];
 
@@ -211,7 +211,9 @@ async function limitsFromRuns(
     const slot = (latest[conn] ??= { windows: {}, at: e.at });
     for (const [key, w] of Object.entries(e.info!.unifiedWindows!)) {
       if (key.includes("overage") || typeof w?.utilization !== "number") continue;
-      slot.windows[key] = { usedPercent: w.utilization * 100, resetsAt: Number(w.resetsAt) || 0 };
+      // a window Claude already refuses is full, whatever the reported fraction says
+      const usedPercent = w.status === "rejected" ? 100 : w.utilization * 100;
+      slot.windows[key] = { usedPercent, resetsAt: Number(w.resetsAt) || 0 };
     }
     slot.at = e.at;
   }
@@ -323,7 +325,7 @@ function normalizeSettings(raw: unknown): Settings {
   const standby = Number(src.standbyCheckMinutes);
   return {
     autoSwitch: src.autoSwitch === true,
-    threshold: Number.isFinite(threshold) ? Math.min(99, Math.max(50, threshold)) : DEFAULT_SETTINGS.threshold,
+    threshold: Number.isFinite(threshold) ? Math.min(100, Math.max(50, threshold)) : DEFAULT_SETTINGS.threshold,
     standbyCheckMinutes: [0, 30, 60].includes(standby) ? standby : DEFAULT_SETTINGS.standbyCheckMinutes,
     excluded: Array.isArray(src.excluded) ? [...new Set(src.excluded.map(String).filter((id) => UUID.test(id)))].slice(0, 50) : [],
   };
